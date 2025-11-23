@@ -466,6 +466,11 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
     import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
 
+    // 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
+    // นำ URL ที่ได้จาก Google Apps Script (Deploy > Web App) มาใส่ตรงนี้
+    const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyDQn1lwBqDHw7Igv0_txX2D5V7v9B6uRyLvv5rnSEB_G-lB1A302SeqmFgftVwV7oY/exec'; 
+    // 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
+
     const firebaseConfig = {
       apiKey: "AIzaSyALRVfx1-cOz1NO3RuYXaecOYLxNm3KgUA",
       authDomain: "bright-54c82.firebaseapp.com",
@@ -495,7 +500,6 @@
                 isUploading: false, isSubmitting: false,
                 lastClosingTime: null,
                 showModal: false, selectedItem: {}, 
-                // Updated: customOptions now uses selectedNoodles array
                 customOptions: { size: 'regular', spiciness: 'เผ็ดปกติ', note: '', toppings: [], selectedMeats: [], selectedNoodles: [] },
                 showHistoryModal: false,
                 categories: ['เตี๋ยวน้ำตก', 'เตี๋ยวน้ำใส', 'เตี๋ยวต้มยำ', 'เตี๋ยวแห้ง', 'ลวกจิ้ม'], selectedCategory: 'all',
@@ -589,16 +593,13 @@
             openCustomizeModal(item) { 
                 if (!item.available) return; 
                 this.selectedItem = item; 
-                // Initialize selectedNoodles as empty array
                 this.customOptions = { size: 'regular', spiciness: 'เผ็ดปกติ', note: '', toppings: [], selectedMeats: [], selectedNoodles: [] }; 
                 this.showModal = true; 
             },
-            // New method for toggling noodles
             toggleNoodleSelection(noodle) {
                 const idx = this.customOptions.selectedNoodles.findIndex(n => n.id === noodle.id);
                 if (idx > -1) this.customOptions.selectedNoodles.splice(idx, 1); else this.customOptions.selectedNoodles.push(noodle);
             },
-            // Helper to check if noodle is selected
             isNoodleSelected(noodle) { 
                 return this.customOptions.selectedNoodles.some(n => n.id === noodle.id); 
             },
@@ -630,7 +631,6 @@
                     ...this.selectedItem, 
                     name: displayName,
                     size: this.customOptions.size,
-                    // Save selected noodles array
                     selectedNoodles: [...this.customOptions.selectedNoodles], 
                     spiciness: this.customOptions.spiciness, 
                     selectedMeats: [...this.customOptions.selectedMeats], 
@@ -642,6 +642,61 @@
                 const Toast = Swal.mixin({ toast: true, position: 'top', showConfirmButton: false, timer: 800, background: '#991b1b', color: '#fff' }); Toast.fire({ icon: 'success', title: 'เพิ่มลงตะกร้า 🍜' }); 
             },
             removeCartItem(index) { this.cart.splice(index, 1); },
+
+            // ====== ฟังก์ชันใหม่สำหรับส่งเข้า Sheet ======
+// ฟังก์ชันส่งเข้า Sheet แบบแยกคอลัมน์
+            async sendToGoogleSheet(orderData) {
+                try {
+                    // 1. ชื่อเมนู (รวมกันคั่นด้วยจุลภาค)
+                    const menuNames = orderData.items.map(item => item.name).join(', \n');
+
+                    // 2. เส้น (ดึงเฉพาะชื่อเส้นออกมา)
+                    const noodles = orderData.items.map(item => {
+                        return (item.selectedNoodles && item.selectedNoodles.length > 0) 
+                            ? item.selectedNoodles.map(n => n.name).join('+') 
+                            : '-';
+                    }).join(', \n');
+
+                    // 3. เนื้อ (ดึงเฉพาะชื่อเนื้อ)
+                    const meats = orderData.items.map(item => {
+                        return (item.selectedMeats && item.selectedMeats.length > 0) 
+                            ? item.selectedMeats.map(m => m.name).join('+') 
+                            : '-';
+                    }).join(', \n');
+
+                    // 4. ความเผ็ด
+                    const spiciness = orderData.items.map(item => item.spiciness || '-').join(', \n');
+
+                    // 5. โน้ต + ท็อปปิ้ง (เอามารวมกันในช่องโน้ต)
+                    const notes = orderData.items.map(item => {
+                        let txt = item.note || '';
+                        if (item.toppings && item.toppings.length > 0) {
+                            txt += ' (เพิ่ม: ' + item.toppings.map(t => t.name).join(',') + ')';
+                        }
+                        return txt || '-';
+                    }).join(', \n');
+
+                    const payload = {
+                        customer_name: orderData.customerName,
+                        menu_name: menuNames,
+                        noodles: noodles,      // ส่งแยก
+                        meats: meats,          // ส่งแยก
+                        spiciness: spiciness,  // ส่งแยก
+                        note: notes,           // ส่งแยก
+                        price: orderData.total
+                    };
+
+                    await fetch(GOOGLE_SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload)
+                    });
+                    console.log("Sent to Sheet (Separated Columns)");
+                } catch (error) {
+                    console.error("Sheet Error", error);
+                }
+            },
             async submitOrder() {
                 if (this.cart.length === 0) return;
                 if (!this.customerName) { Swal.fire('แจ้งเตือน', 'ใส่ชื่อลูกค้าก่อนครับ', 'warning'); return; }
@@ -649,6 +704,10 @@
                 this.isSubmitting = true;
                 const total = this.cartTotal;
                 const orderData = { customerName: this.customerName, items: [...this.cart], total: total, status: "waiting", timestamp: serverTimestamp() };
+                
+                // เรียกใช้ฟังก์ชันส่ง Google Sheet
+                this.sendToGoogleSheet(orderData);
+
                 this.cart = []; this.customerName = ''; window.scrollTo({ top: 0, behavior: 'smooth' });
                 confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#dc2626', '#fbbf24', '#fca5a5'] });
                 Swal.fire({ title: 'รับออเดอร์แล้ว!', text: 'รอดูคิวได้เลย', icon: 'success', confirmButtonColor: '#dc2626', timer: 2000, showConfirmButton: false });
